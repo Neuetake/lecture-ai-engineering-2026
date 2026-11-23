@@ -42,6 +42,37 @@ def test_built_index_can_be_searched(materials, monkeypatch):
     assert hits[0]["distance"] == pytest.approx(0)
 
 
+def test_search_with_neighbors_stays_in_document_and_deduplicates(monkeypatch):
+    pages = [
+        {"page_id": f"lec01-main-p{i:03}", "document_id": "lec01-main",
+         "page": i, "content": f"本文1-{i}"}
+        for i in range(1, 4)
+    ] + [
+        {"page_id": f"lec02-main-p{i:03}", "document_id": "lec02-main",
+         "page": i, "content": f"本文2-{i}"}
+        for i in range(1, 3)
+    ]
+    hits = [
+        {**pages[1], "distance": 0.1},
+        {**pages[2], "distance": 0.2},
+        {**pages[3], "distance": 0.3},
+    ]
+    monkeypatch.setattr(retrieval, "load_pages", lambda *_: pages)
+    monkeypatch.setattr(retrieval, "search", lambda *_: hits)
+
+    results = retrieval.search_with_neighbors("質問")
+
+    assert [page["page_id"] for page in results] == [
+        "lec01-main-p002", "lec01-main-p003", "lec02-main-p001",
+        "lec01-main-p001", "lec02-main-p002",
+    ]
+    assert len({page["page_id"] for page in results}) == len(results)
+    assert [page["is_neighbor"] for page in results] == [False, False, False, True, True]
+    assert results[3]["matched_page_id"] == "lec01-main-p002"
+    assert results[3]["content"] == "本文1-1"
+    assert results[-1]["matched_page_id"] == "lec02-main-p001"
+
+
 def test_existing_index_survives_failed_rebuild(materials):
     source, database = materials
     build_index(source, database, embedder=lambda *_: [1, 0])
