@@ -138,6 +138,37 @@ def search(query: str) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def search_with_neighbors(query: str) -> list[dict]:
+    """通常の検索結果に、同じ資料内の前後1ページを重複なく追加する。"""
+    hits = search(query)
+    pages_by_document: dict[str, dict[int, dict]] = defaultdict(dict)
+    for page in load_pages(RAG_SOURCE):
+        pages_by_document[page["document_id"]][page["page"]] = page
+
+    results = []
+    included = set()
+    for hit in hits:
+        page_id = hit["page_id"]
+        if page_id not in included:
+            results.append({**hit, "is_neighbor": False, "matched_page_id": page_id})
+            included.add(page_id)
+
+    for hit in hits:
+        document_pages = pages_by_document.get(hit["document_id"], {})
+        for page_number in (hit["page"] - 1, hit["page"] + 1):
+            neighbor = document_pages.get(page_number)
+            if neighbor is None or neighbor["page_id"] in included:
+                continue
+            results.append({
+                **neighbor,
+                "distance": None,
+                "is_neighbor": True,
+                "matched_page_id": hit["page_id"],
+            })
+            included.add(neighbor["page_id"])
+    return results
+
+
 def search_graph(query: str) -> dict:
     """ベクトル検索を入口に、前後ページと共通用語で候補を広げる。"""
     pages = {page["page_id"]: page for page in load_pages(RAG_SOURCE)}
@@ -202,10 +233,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="エージェントを使わず、講義資料の検索だけを実行する")
     parser.add_argument("query", help="調べたい内容")
     args = parser.parse_args()
-    for i, result in enumerate(search(args.query), 1):
+    for i, result in enumerate(search_with_neighbors(args.query), 1):
         print(f"\n{'=' * 60}\n検索結果 {i}\n{'=' * 60}")
         print(f"講義: {result['document_title']}")
         print(f"章: {result['section']}")
         print(f"タイトル: {result['title']}")
         print(f"ページ: {result['page']}")
+        if result["is_neighbor"]:
+            print(f"前後ページ（検索一致: {result['matched_page_id']}）")
         print(f"\n{result['content']}")
